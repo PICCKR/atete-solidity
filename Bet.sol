@@ -143,8 +143,7 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
 
 
 
-    event challengeBetMade(address indexed bookMaker, uint256 betId, uint256 startTimestamp, uint256 closeTimestamp, string  betDetails,uint256 amount);
-    event marketBetMade(address indexed bookMaker,uint256 betId, uint256 startTimestamp, uint256 closeTimestamp, string  betDetails, uint256 amount);
+    event BetMade(address indexed bookMaker,uint256 betType,uint256 betId, uint256 startTimestamp, uint256 closeTimestamp, string  betDetails, uint256 amount);
 
     event BetPosition(address indexed sender, uint256  betId, uint256 position, uint256 amount);
     event Claim(address indexed sender, uint256  betId, uint256 amount);
@@ -186,15 +185,8 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
         adminAddress = msg.sender;
     }
 
-
-
-    function makeChallengeBet(uint256 startTimestamp,uint256 closeTimestamp, string calldata betDetails)public payable whenNotPaused nonReentrant notContract   {
-
-        uint256 _amount = msg.value;
+    function makeStandardBet(uint256 startTimestamp,uint256 closeTimestamp, string calldata betDetails, uint256 positionCount) public payable onlyOwner {
         require(startTimestamp > block.timestamp, "Start timestamp must be in the future");
-        require(_amount >= minBetAmount, "Bet amount must be greater than minBetAmount");
-        require(_amount <= maxBetAmount, "Bet amount must be smaller than maxBetAmount");
-
         Bet storage mm = bets[betCount];
 
         mm.betId = betCount;
@@ -204,25 +196,63 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
         mm.startTimestamp = startTimestamp;
         mm.lockTimestamp = startTimestamp - bufferLockSeconds;
         mm.closeTimestamp = closeTimestamp;
-        mm.voteCloseTimestamp = closeTimestamp + bufferVoteSeconds;
-        mm.totalAmount = _amount;
+        mm.voteCloseTimestamp = 0;
+        mm.totalAmount = 0;
 
-        mm.positionAmounts.push(_amount);
-        mm.positionAmounts.push(0);
-        mm.positionDetails.push("Yes");
-        mm.positionDetails.push("No");
-        mm.votes.push(0);
-        mm.votes.push(0);
+        for(uint256 i = 0; i < positionCount; i++){
+            mm.positionAmounts.push(0);
+            mm.votes.push(0);
+        }
+        if(positionCount == 2){
+            mm.positionDetails.push("Win");
+            mm.positionDetails.push("Fail");
+        }
+        else if(positionCount == 3){
+            mm.positionDetails.push("Home");
+            mm.positionDetails.push("Draw");
+            mm.positionDetails.push("Away");
+        }
+        else{
+            require(false,"Not a exact Input");
+        }
 
-        BetInfo storage betInfo = ledger[mm.betId][msg.sender];
-        betInfo.position = 0;
-        betInfo.amount = _amount;
-        userBets[msg.sender].push(mm.betId);
-
-        emit challengeBetMade(msg.sender, betCount, startTimestamp,closeTimestamp, betDetails,_amount);
-        betCount = betCount + 1;
+        emit BetMade(msg.sender, mm.betType, betCount, startTimestamp,closeTimestamp, betDetails,0);        betCount = betCount + 1;
     }
 
+    function makeChallengeBet(uint256 startTimestamp,uint256 closeTimestamp, string calldata betDetails, uint256 positionCount) public payable {
+        require(startTimestamp > block.timestamp, "Start timestamp must be in the future");
+        Bet storage mm = bets[betCount];
+
+        mm.betId = betCount;
+        mm.betType = 1;
+        mm.bookMaker = msg.sender;
+        mm.betDetails = betDetails;
+        mm.startTimestamp = startTimestamp;
+        mm.lockTimestamp = startTimestamp - bufferLockSeconds;
+        mm.closeTimestamp = closeTimestamp;
+        mm.voteCloseTimestamp = 0;
+        mm.totalAmount = 0;
+
+        for(uint256 i = 0; i < positionCount; i++){
+            mm.positionAmounts.push(0);
+            mm.votes.push(0);
+        }
+        if(positionCount == 2){
+            mm.positionDetails.push("Win");
+            mm.positionDetails.push("Fail");
+        }
+        else if(positionCount == 3){
+            mm.positionDetails.push("Home");
+            mm.positionDetails.push("Draw");
+            mm.positionDetails.push("Away");
+        }
+        else{
+            require(false,"Not a exact Input");
+        }
+
+        emit BetMade(msg.sender, mm.betType, betCount, startTimestamp,closeTimestamp, betDetails,0);
+        betCount = betCount + 1;
+    }
     function makeMarketBet(uint256 startTimestamp,uint256 closeTimestamp, string calldata betDetails, string calldata myPosition) public payable whenNotPaused nonReentrant notContract  {
 
         uint256 _amount = msg.value;
@@ -233,7 +263,7 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
         Bet storage mm = bets[betCount];
 
         mm.betId = betCount;
-        mm.betType = 1;
+        mm.betType = 2;
         mm.bookMaker = msg.sender;
         mm.betDetails = betDetails;
         mm.startTimestamp = startTimestamp;
@@ -251,42 +281,18 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
         betInfo.amount = _amount;
         userBets[msg.sender].push(mm.betId);
 
-        emit marketBetMade(msg.sender, betCount, startTimestamp,closeTimestamp, betDetails,_amount);
+        emit BetMade(msg.sender, mm.betType,betCount, startTimestamp,closeTimestamp, betDetails,_amount);
         betCount = betCount + 1;
     }
 
-    function betChallengeBet(uint256 betId) external payable whenNotPaused nonReentrant notContract {
+    function betWithExistingPosition(uint256 betId, uint256 position) external payable whenNotPaused nonReentrant notContract {
         uint256 _amount = msg.value;
-        require(_betTable(betId), "Bet not bettable");
+        require(_betable(betId), "Bet not bettable");
         require(_amount >= minBetAmount, "Bet amount must be greater than minBetAmount");
         require(_amount <= maxBetAmount, "Bet amount must be smaller than maxBetAmount");
         require(ledger[betId][msg.sender].amount == 0, "You can not bet coz you have already bet");
         Bet storage mm = bets[betId];
 
-        require(mm.betType == 0, "This is ChallengeBet");
-
-        mm.totalAmount = mm.totalAmount + _amount;
-        mm.positionAmounts[1] = mm.positionAmounts[1] + _amount;
-
-        // Update user data
-        BetInfo storage betInfo = ledger[betId][msg.sender];
-        betInfo.position = 1;
-        betInfo.amount = _amount;
-        userBets[msg.sender].push(betId);
-
-
-        emit BetPosition(msg.sender, betId, 1, _amount);
-    }
-
-    function betMarketBetWithExisting(uint256 betId, uint256 position) external payable whenNotPaused nonReentrant notContract {
-        uint256 _amount = msg.value;
-        require(_betTable(betId), "Bet not bettable");
-        require(_amount >= minBetAmount, "Bet amount must be greater than minBetAmount");
-        require(_amount <= maxBetAmount, "Bet amount must be smaller than maxBetAmount");
-        require(ledger[betId][msg.sender].amount == 0, "You can not bet coz you have already bet");
-        Bet storage mm = bets[betId];
-
-        require(mm.betType == 1, "This is MarketBet");
 
         mm.totalAmount = mm.totalAmount + _amount;
         mm.positionAmounts[position] = mm.positionAmounts[position] + _amount;
@@ -300,16 +306,16 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
         emit BetPosition(msg.sender, betId, position, _amount);
     }
 
-    function betMarketBetWithNewPosition(uint256 betId, string calldata position) external payable whenNotPaused nonReentrant notContract {
+    function betWithNewPosition(uint256 betId, string calldata position) external payable whenNotPaused nonReentrant notContract {
         uint256 _amount = msg.value;
-        require(_betTable(betId), "Bet not bettable");
+        require(_betable(betId), "Bet not bettable");
         require(_amount >= minBetAmount, "Bet amount must be greater than minBetAmount");
         require(_amount <= maxBetAmount, "Bet amount must be smaller than maxBetAmount");
         require(ledger[betId][msg.sender].amount == 0, "You can not bet coz you have already bet");
 
         Bet storage mm = bets[betId];
 
-        require(mm.betType == 1, "This is MarketBet");
+        require(mm.betType == 2, "Only MarketBet available");
 
         mm.totalAmount = mm.totalAmount + _amount;
         mm.positionDetails.push(position);
@@ -325,20 +331,40 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
         emit BetPosition(msg.sender, betId, numPosition, _amount);
     }
 
-    function vote(uint256 betId, uint256 position) public payable {
-        uint256 _amount = msg.value;
-        require(block.timestamp < bets[betId].voteCloseTimestamp, "Vote is finished");
-        require(block.timestamp > bets[betId].closeTimestamp, "Bet is not finished yet.");
-        require(ledger[betId][msg.sender].amount != 0, "You didn't bet this bet");
-        require(ledger[betId][msg.sender].voted == false, "You have already vote");
 
-        uint256 userPosition = ledger[betId][msg.sender].position;
-        if(position == userPosition){
-            require(_amount == requiredAmountforSelfVote, "If you want to vote on your party, you need to send money");
+    function vote(uint256 betId, uint256 position) public payable{
+        
+
+        if(bets[betId].betType == 2)
+        {
+            uint256 _amount = msg.value;
+            require(block.timestamp < bets[betId].voteCloseTimestamp, "Vote is finished");
+            require(block.timestamp > bets[betId].closeTimestamp, "Bet is not finished yet.");
+            require(ledger[betId][msg.sender].amount != 0, "You didn't bet this bet");
+            require(ledger[betId][msg.sender].voted == false, "You have already vote");
+
+            uint256 userPosition = ledger[betId][msg.sender].position;
+
+
+            if(position == userPosition){
+                require(_amount == requiredAmountforSelfVote, "If you want to vote on your party, you need to send money");
+            }
+            Bet storage mm = bets[betId];
+            mm.votes[position] = mm.votes[position] + 1;
+            ledger[betId][msg.sender].voted = true;
         }
-        Bet storage mm = bets[betId];
-        mm.votes[position] = mm.votes[position] + 1;
-        ledger[betId][msg.sender].voted = true;
+        else{
+            bets[betId].voteCloseTimestamp = block.timestamp;
+            require(block.timestamp > bets[betId].closeTimestamp, "Bet is not finished yet.");
+            require(ledger[betId][msg.sender].voted == false, "You have already vote");
+
+            Bet storage mm = bets[betId];
+            mm.votes[position] = mm.votes[position] + 1;
+            ledger[betId][msg.sender].voted = true;
+            endBet(betId);
+
+        }
+        
     }
 
     function claim(uint256[] calldata betIds) external nonReentrant notContract {
@@ -363,22 +389,18 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
         }
 
         if (reward > 0) {
-            (bool sent, bytes memory data) = address(msg.sender).call{value: reward}("");
+            (bool sent, ) = address(msg.sender).call{value: reward}("");
             require(sent, "Failed to send reward.");
         }
     }
 
-
-
-
-    function _betTable(uint256 betId) internal view returns (bool) {
+    function _betable(uint256 betId) internal view returns (bool) {
         return
         bets[betId].startTimestamp != 0 &&
         bets[betId].lockTimestamp != 0 &&
         block.timestamp < bets[betId].startTimestamp &&
         block.timestamp < bets[betId].lockTimestamp;
     }
-
 
     function pause() external whenNotPaused onlyAdmin {
         _pause();
@@ -407,13 +429,12 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
 
         
         uint256 currentTreasuryAmount = treasuryAmount;
-        (bool sent, bytes memory data) = adminAddress.call{value: treasuryAmount}("");
+        (bool sent, ) = adminAddress.call{value: treasuryAmount}("");
         require(sent, "Failed to claim Treasury");
         treasuryAmount = 0;
 
         emit TreasuryClaim(currentTreasuryAmount);
     }
-
 
     /**
      * @notice Set minBetAmount
@@ -425,7 +446,6 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
 
         emit NewMinBetAmount(block.timestamp, minBetAmount);
     }
-
 
     /**
      * @notice Set minBetAmount
@@ -460,8 +480,6 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
         emit NewTreasuryFee(block.timestamp, treasuryFee);
     }
 
-    
-
     /**
      * @notice Set admin address
      * @dev Callable by owner
@@ -472,7 +490,6 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
 
         emit NewAdminAddress(_adminAddress);
     }
-
 
     /**
      * @notice Returns bet betIds and bet information for a user that has participated
@@ -526,10 +543,6 @@ contract CustomizedBet is Ownable, Pausable, ReentrancyGuard {
     function getUserBetsLength(address user) external view returns (uint256) {
         return userBets[user].length;
     }
-
-
-
-
 
     /**
      * @notice Get the claimable stats of specific betId and user account
